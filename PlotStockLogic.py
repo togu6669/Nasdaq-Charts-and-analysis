@@ -105,17 +105,34 @@ def register_callbacks(app):
                 showspikes=True,
                 spikemode="across",
                 spikesnap="cursor",
+                showline=True,
+                linewidth=1,
+                linecolor="black"
             ),
-            yaxis=dict(title="Price (USD)", showspikes=True),
+            yaxis=dict(
+                title="Price (USD)",
+                showspikes=True,
+                showline=True,
+                linewidth=1,
+                linecolor="black"
+            ),
             yaxis2=dict(
                 title="Volume",
                 overlaying="y",
                 side="right",
                 showgrid=False,
             ),
-            hovermode="x unified",
-            template="plotly_white",
-            legend=dict(orientation="h", y=-0.2)
+            hovermode="x unified",  # ✅ unified hover
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=11,
+                font_family="Arial",
+                bordercolor="black"
+            ),
+            # ✅ Lock hover box position to top-right
+            hoverdistance=100,
+            margin=dict(t=80),
+            uniformtext=dict(mode="hide", minsize=10),
         )
 
         # Fundamentals

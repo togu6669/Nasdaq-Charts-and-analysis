@@ -73,13 +73,41 @@ def create_layout():
         }),
 
         # --- Metrics row ---
-        html.Div(id="fundamental-info", style={
-            "display": "flex",
-            "gap": "20px",
-            "margin-bottom": "20px",
-            "flex-wrap": "wrap"
+        html.Div([
+            # Row 1: OHLCV dynamic badges
+            html.Div(id="hover-info", style={
+                "display": "flex",
+                "flexWrap": "wrap",
+                "gap": "8px",
+                "marginBottom": "10px"
+            }),
+
+            # Row 2: Fundamental metrics (static)
+            html.Div(id="fundamental-info", style={
+                "display": "flex",
+                "flexWrap": "wrap",
+                "gap": "12px",
+                "marginBottom": "10px"
+            }),
+
+            # Row 3: Profit metrics (static)
+            html.Div(id="profit-info", style={
+                "display": "flex",
+                "flexWrap": "wrap",
+                "gap": "12px",
+                "marginBottom": "20px"
+            })
+        ], style={
+            "padding": "10px",
+            "border": "1px solid #ddd",
+            "borderRadius": "10px",
+            "backgroundColor": "#f9f9f9"
         }),
 
-        # Chart
-        dcc.Graph(id="stock-chart")
+        # --- Chart ---
+        dcc.Graph(
+            id="stock-chart",
+            clear_on_unhover=True,  # removes stale info
+            config={"displayModeBar": True}
+        )
     ])

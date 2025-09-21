@@ -1,179 +1,127 @@
-import yfinance as yf
-import plotly.graph_objects as go
 from dash import Input, Output, html
+import yfinance as yf
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+import numpy as np
 
-def wilder_average(series, n):
-    return series.ewm(alpha=1/n, adjust=False).mean()
-
-def metric_card(label, value):
-    """Helper to make styled metric cards."""
+def metric_card(label, value, color="#007bff"):
     return html.Div([
-        html.Div(label, style={"font-size": "14px", "color": "gray"}),
-        html.Div(value, style={"font-size": "18px", "font-weight": "bold"})
+        html.Div(label, style={"fontSize": "12px", "color": "gray"}),
+        html.Div(value, style={"fontSize": "16px", "fontWeight": "bold", "color": "white"})
     ], style={
-        "border": "1px solid #ddd",
-        "border-radius": "10px",
-        "padding": "10px 15px",
-        "box-shadow": "0 1px 3px rgba(0,0,0,0.1)",
-        "min-width": "140px",
-        "text-align": "center",
-        "background-color": "white"
+        "backgroundColor": color,
+        "padding": "6px 12px",
+        "borderRadius": "8px",
+        "minWidth": "120px",
+        "textAlign": "center"
     })
 
-def calc_growth(series, label):
-    """Calculate YoY growth % from yfinance financials series."""
-    try:
-        if len(series) >= 2:
-            latest = series.iloc[0]
-            prev = series.iloc[1]
-            growth = (latest - prev) / prev * 100
-            return f"{growth:.2f}%"
-        return "N/A"
-    except Exception:
-        return "N/A"
+def calc_growth(series):
+    if series is not None and len(series) >= 2:
+        latest = series.iloc[0]
+        prev = series.iloc[1]
+        return f"{(latest - prev) / prev * 100:.2f}%"
+    return "N/A"
 
 def register_callbacks(app):
 
     @app.callback(
         Output("stock-chart", "figure"),
         Output("fundamental-info", "children"),
+        Output("profit-info", "children"),
         Input("ticker-input", "value"),
         Input("period-dropdown", "value"),
         Input("chart-type", "value"),
         Input("wilder-days", "value"),
     )
-    def update_chart(ticker, period, mode, wilder_days):
+    def update_chart(ticker, period, chart_type, wilder_days):
         if not ticker:
-            return go.Figure(), []
+            return go.Figure(), [], []
 
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=period)
+        df = stock.history(period=period)
+        if df.empty:
+            return go.Figure(), [], []
 
-        if hist.empty:
-            return go.Figure().update_layout(
-                title=f"No data found for {ticker}",
-                template="plotly_white"
-            ), []
+        # --- Chart ---
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.67, 0.33],
+        )
 
-        fig = go.Figure()
-
-        # Main chart
-        if mode == "candlestick":
+        # Candlestick / line
+        if chart_type == "candlestick":
             fig.add_trace(go.Candlestick(
-                x=hist.index,
-                open=hist['Open'],
-                high=hist['High'],
-                low=hist['Low'],
-                close=hist['Close'],
-                name="OHLC"
-            ))
+                x=df.index,
+                open=df["Open"],
+                high=df["High"],
+                low=df["Low"],
+                close=df["Close"],
+                name="Price",
+                customdata=np.stack([df["High"].values, df["Low"].values, df["Close"].shift(1).values], axis=-1)
+            ), row=1, col=1)
         else:
             fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=hist['Close'],
-                mode='lines',
-                name="Close Price"
-            ))
+                x=df.index,
+                y=df["Close"],
+                mode="lines",
+                name="Price"
+            ), row=1, col=1)
 
-        # Wilder’s average
-        rma = None
-        if wilder_days and wilder_days > 1:
-            rma = wilder_average(hist["Close"], wilder_days)
-            fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=rma,
-                mode='lines',
-                name=f"Wilder {wilder_days}-day Avg",
-                line=dict(color="orange", width=2, dash="dot")
-            ))
+        # Wilder
+        df["Wilder"] = df["Close"].ewm(span=wilder_days, adjust=False, min_periods=wilder_days).mean()
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["Wilder"],
+            mode="lines",
+            name=f"Wilder {wilder_days}d"
+        ), row=1, col=1)
 
         # Volume
         fig.add_trace(go.Bar(
-            x=hist.index,
-            y=hist['Volume'],
+            x=df.index,
+            y=df["Volume"],
             name="Volume",
-            yaxis="y2",
-            opacity=0.3,
-            marker_color="blue"
-        ))
+            marker_color="rgba(0,100,200,0.4)"
+        ), row=2, col=1)
 
         fig.update_layout(
-            title=f"{ticker.upper()} Stock Price ({period})",
-            xaxis=dict(
-                rangeslider=dict(visible=True),
-                type="date",
-                showspikes=True,
-                spikemode="across",
-                spikesnap="cursor",
-                showline=True,
-                linewidth=1,
-                linecolor="black"
-            ),
-            yaxis=dict(
-                title="Price (USD)",
-                showspikes=True,
-                showline=True,
-                linewidth=1,
-                linecolor="black"
-            ),
-            yaxis2=dict(
-                title="Volume",
-                overlaying="y",
-                side="right",
-                showgrid=False,
-            ),
-            hovermode="x unified",  # ✅ unified hover
-            hoverlabel=dict(
-                bgcolor="white",
-                font_size=11,
-                font_family="Arial",
-                bordercolor="black"
-            ),
-            # ✅ Lock hover box position to top-right
-            hoverdistance=100,
-            margin=dict(t=80),
-            uniformtext=dict(mode="hide", minsize=10),
+            hovermode="x",
+            xaxis=dict(showspikes=True, spikemode="across"),
+            xaxis2=dict(showspikes=True, spikemode="across"),
+            yaxis=dict(title="Price (USD)"),
+            yaxis2=dict(title="Volume"),
+            template="plotly_white"
         )
 
-        # Fundamentals
+        # --- Static metrics ---
         info = stock.info
-        pe_ratio = info.get("trailingPE", "N/A")
-        pb_ratio = info.get("priceToBook", "N/A")
-        current_ratio = info.get("currentRatio", "N/A")
-        quick_ratio = info.get("quickRatio", "N/A")
+        pe_ratio = info.get("trailingPE","N/A")
+        pb_ratio = info.get("priceToBook","N/A")
+        current_ratio = info.get("currentRatio","N/A")
+        quick_ratio = info.get("quickRatio","N/A")
+        disparity = round(df["Close"].iloc[-1] / df["Wilder"].iloc[-1] * 100, 2) if "Wilder" in df else "N/A"
 
-        disparity = None
-        if rma is not None and not rma.dropna().empty:
-            disparity = round(hist["Close"].iloc[-1] / rma.iloc[-1] * 100, 2)
+        fundamental_info = [
+            metric_card("P/E Ratio", pe_ratio),
+            metric_card("P/B Ratio", pb_ratio),
+            metric_card("Disparity", f"{disparity}%"),
+            metric_card("Current Ratio", current_ratio),
+            metric_card("Quick Ratio", quick_ratio)
+        ]
 
-        # Growth metrics
-        financials = stock.financials
-        cashflow = stock.cashflow
+        financials = stock.financials if stock.financials is not None else None
+        cashflow = stock.cashflow if stock.cashflow is not None else None
+        revenue_growth = calc_growth(financials.loc["Total Revenue"]) if financials is not None and "Total Revenue" in financials.index else "N/A"
+        eps_growth = calc_growth(financials.loc["Diluted EPS"]) if financials is not None and "Diluted EPS" in financials.index else "N/A"
+        fcf_growth = calc_growth(cashflow.loc["Total Cash From Operating Activities"]) if cashflow is not None and "Total Cash From Operating Activities" in cashflow.index else "N/A"
 
-        revenue_growth = calc_growth(financials.loc["Total Revenue"], "Revenue") if "Total Revenue" in financials.index else "N/A"
-        eps_growth = calc_growth(financials.loc["Diluted EPS"], "EPS") if "Diluted EPS" in financials.index else "N/A"
-        fcf_growth = calc_growth(cashflow.loc["Total Cash From Operating Activities"], "Free Cash Flow") if "Total Cash From Operating Activities" in cashflow.index else "N/A"
+        profit_info = [
+            metric_card("Revenue Growth", revenue_growth),
+            metric_card("EPS Growth", eps_growth),
+            metric_card("Free Cash Flow Growth", fcf_growth)
+        ]
 
-        # --- Two groups of cards ---
-        fundamentals = html.Div([
-            html.Div([
-                metric_card("P/E Ratio", pe_ratio),
-                metric_card("P/B Ratio", pb_ratio),
-                metric_card(f"Disparity ({wilder_days}d)", f"{disparity}%" if disparity else "N/A"),
-                metric_card("Current Ratio", current_ratio),
-                metric_card("Quick Ratio", quick_ratio),
-            ], style={
-                "display": "flex", "gap": "20px", "flex-wrap": "wrap", "margin-bottom": "20px"
-            }),
-
-            html.Div([
-                html.H4("Profit Stocks", style={"margin-bottom": "10px"}),
-                metric_card("Revenue Growth (YoY)", revenue_growth),
-                metric_card("EPS Growth (YoY)", eps_growth),
-                metric_card("Free Cash Flow Growth (YoY)", fcf_growth),
-            ], style={
-                "display": "flex", "gap": "20px", "flex-wrap": "wrap"
-            })
-        ])
-
-        return fig, fundamentals
+        return fig, fundamental_info, profit_info

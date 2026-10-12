@@ -95,13 +95,22 @@ def create_layout():
                 "display": "flex",
                 "flexWrap": "wrap",
                 "gap": "12px",
+                "marginBottom": "10px"
+            }),
+
+            # Row 4: Mean-reversion entry signal (always visible)
+            html.Div(id="signal-info", style={
+                "display": "flex",
+                "flexWrap": "wrap",
+                "gap": "12px",
+                "alignItems": "center",
                 "marginBottom": "20px"
             })
         ], style={
             "padding": "10px",
             "border": "1px solid #ddd",
             "borderRadius": "10px",
-            "backgroundColor": "#f9f9f9"
+            "backgroundColor": "white"
         }),
 
         # --- Chart ---

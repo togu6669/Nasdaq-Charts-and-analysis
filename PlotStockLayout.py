@@ -21,7 +21,7 @@ def create_layout():
                 dcc.Input(
                     id="ticker-input",
                     type="text",
-                    value="AAPL",
+                    value="INTC",
                     debounce=True,
                     placeholder="e.g. AAPL, MSFT, GOOG",
                     style={"width": "120px"}

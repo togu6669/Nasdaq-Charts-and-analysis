@@ -20,7 +20,8 @@ def calc_growth(series):
     if series is not None and len(series) >= 2:
         latest = series.iloc[0]
         prev = series.iloc[1]
-        return f"{(latest - prev) / prev * 100:.2f}%"
+        if prev != 0:
+            return f"{(latest - prev) / abs(prev) * 100:.2f}%"
     return "N/A"
 
 def register_callbacks(app):
@@ -116,7 +117,7 @@ def register_callbacks(app):
         cashflow = stock.cashflow if stock.cashflow is not None else None
         revenue_growth = calc_growth(financials.loc["Total Revenue"]) if financials is not None and "Total Revenue" in financials.index else "N/A"
         eps_growth = calc_growth(financials.loc["Diluted EPS"]) if financials is not None and "Diluted EPS" in financials.index else "N/A"
-        fcf_growth = calc_growth(cashflow.loc["Total Cash From Operating Activities"]) if cashflow is not None and "Total Cash From Operating Activities" in cashflow.index else "N/A"
+        fcf_growth = calc_growth(cashflow.loc["Operating Cash Flow"]) if cashflow is not None and "Operating Cash Flow" in cashflow.index else "N/A"
 
         profit_info = [
             metric_card("Revenue Growth", revenue_growth),

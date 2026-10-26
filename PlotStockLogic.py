@@ -1,8 +1,9 @@
-from dash import Input, Output, html
+from dash import Input, Output, State, html
 import yfinance as yf
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
 
 # Signal colours: red flags an entry, green means stand aside.
 RED = "#d32f2f"
@@ -20,15 +21,16 @@ def metric_card(label, value, color="#000000"):
     green while every card keeps the same white background.
     """
     return html.Div([
-        html.Div(label, style={"fontSize": "12px", "color": "#333333"}),
-        html.Div(value, style={"fontSize": "16px", "fontWeight": "bold", "color": color})
+        html.Div(label, style={"fontSize": "11px", "color": "#333333", "fontFamily": "Arial, Helvetica, sans-serif"}),
+        html.Div(value, style={"fontSize": "14px", "fontWeight": "bold", "color": color, "fontFamily": "Arial, Helvetica, sans-serif"})
     ], style={
         "backgroundColor": "white",
         "border": "1px solid #cccccc",
-        "padding": "6px 12px",
-        "borderRadius": "8px",
-        "minWidth": "120px",
-        "textAlign": "center"
+        "padding": "4px 8px",
+        "borderRadius": "6px",
+        "minWidth": "100px",
+        "textAlign": "center",
+        "fontFamily": "Arial, Helvetica, sans-serif"
     })
 
 def rsi(close, window=14):
@@ -98,7 +100,37 @@ def calc_growth(series):
 def register_callbacks(app):
 
     @app.callback(
+        Output("ticker-input", "options"),
+        Input("ticker-history", "data"),
+        Input("ticker-input", "search_value"),
+    )
+    def update_ticker_options(history, search_value):
+        saved = []
+        for ticker in history or []:
+            normalized = str(ticker).strip().upper()
+            if normalized and normalized not in saved:
+                saved.append(normalized)
+
+        query = (search_value or "").strip().upper()
+        ordered = ([query] if query and query not in saved else []) + saved
+        return [{"label": ticker, "value": ticker} for ticker in ordered]
+
+    @app.callback(
+        Output("ticker-history", "data"),
+        Input("ticker-input", "value"),
+        State("ticker-history", "data"),
+        prevent_initial_call=True,
+    )
+    def remember_ticker(ticker, history):
+        normalized = (ticker or "").strip().upper()
+        if not normalized:
+            return history or ["INTC"]
+        saved = [str(item).strip().upper() for item in (history or []) if str(item).strip()]
+        return [normalized] + [item for item in saved if item != normalized]
+
+    @app.callback(
         Output("stock-chart", "figure"),
+        Output("indicator-history", "data"),
         Output("fundamental-info", "children"),
         Output("profit-info", "children"),
         Output("signal-info", "children"),
@@ -109,12 +141,60 @@ def register_callbacks(app):
     )
     def update_chart(ticker, period, chart_type, wilder_days):
         if not ticker:
-            return go.Figure(), [], [], []
+            return go.Figure(), {}, [], [], []
 
         stock = yf.Ticker(ticker)
         df = stock.history(period=period)
         if df.empty:
-            return go.Figure(), [], [], []
+            return go.Figure(), {}, [], [], []
+
+        # Keep enough warm-up history for rolling volatility measures, even
+        # when the visible chart range is shorter than their lookback window.
+        indicator_df = df if len(df) >= 21 else stock.history(period="6mo")
+        if indicator_df.empty:
+            indicator_df = df
+        previous_close = indicator_df["Close"].shift(1)
+        true_range = pd.concat([
+            indicator_df["High"] - indicator_df["Low"],
+            (indicator_df["High"] - previous_close).abs(),
+            (indicator_df["Low"] - previous_close).abs(),
+        ], axis=1).max(axis=1)
+        atr14 = true_range.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+        atrp14 = atr14 / indicator_df["Close"] * 100
+        log_returns = np.log(indicator_df["Close"] / indicator_df["Close"].shift(1))
+        hv20 = log_returns.rolling(20).std(ddof=1) * np.sqrt(252) * 100
+        rsi14 = rsi(indicator_df["Close"])
+
+        # Align the indicator values to the visible chart dates and keep
+        # their warm-up data from indicator_df when the selected period is short.
+        hover_customdata = np.column_stack([
+            df["Close"].shift(1).to_numpy(),
+            hv20.reindex(df.index).to_numpy(),
+            atrp14.reindex(df.index).to_numpy(),
+            rsi14.reindex(df.index).to_numpy(),
+        ])
+        previous_close_visible = df["Close"].shift(1)
+        hv20_visible = hv20.reindex(df.index)
+        atrp14_visible = atrp14.reindex(df.index)
+        rsi14_visible = rsi14.reindex(df.index)
+
+        def json_number(value):
+            return float(value) if pd.notna(value) and np.isfinite(value) else None
+
+        hover_rows = {}
+        for index, row in df.iterrows():
+            date_key = pd.Timestamp(index).strftime("%Y-%m-%d")
+            hover_rows[date_key] = {
+                "open": json_number(row["Open"]),
+                "high": json_number(row["High"]),
+                "low": json_number(row["Low"]),
+                "close": json_number(row["Close"]),
+                "volume": json_number(row["Volume"]),
+                "previous_close": json_number(previous_close_visible.loc[index]),
+                "hv20": json_number(hv20_visible.loc[index]),
+                "atrp14": json_number(atrp14_visible.loc[index]),
+                "rsi14": json_number(rsi14_visible.loc[index]),
+            }
 
         # --- Chart ---
         fig = make_subplots(
@@ -133,7 +213,18 @@ def register_callbacks(app):
                 low=df["Low"],
                 close=df["Close"],
                 name="Price",
-                customdata=np.stack([df["High"].values, df["Low"].values, df["Close"].shift(1).values], axis=-1)
+                customdata=hover_customdata,
+                hovertemplate=(
+                    "Date: %{x|%Y-%m-%d}<br>"
+                    "Open: %{open:.2f}<br>"
+                    "High: %{high:.2f}<br>"
+                    "Low: %{low:.2f}<br>"
+                    "Close: %{close:.2f}<br>"
+                    "HV20: %{customdata[1]:.2f}%<br>"
+                    "ATRP14: %{customdata[2]:.2f}%<br>"
+                    "RSI14: %{customdata[3]:.2f}"
+                    "<extra></extra>"
+                ),
             ), row=1, col=1)
         else:
             fig.add_trace(go.Scatter(
@@ -194,12 +285,10 @@ def register_callbacks(app):
         pb_ratio = info.get("priceToBook","N/A")
         current_ratio = info.get("currentRatio","N/A")
         quick_ratio = info.get("quickRatio","N/A")
-        disparity = round(df["Close"].iloc[-1] / df["Wilder"].iloc[-1] * 100, 2) if "Wilder" in df else "N/A"
 
         fundamental_info = [
             metric_card("P/E Ratio", pe_ratio),
             metric_card("P/B Ratio", pb_ratio),
-            metric_card("Disparity", f"{disparity}%"),
             metric_card("Current Ratio", current_ratio),
             metric_card("Quick Ratio", quick_ratio)
         ]
@@ -228,10 +317,16 @@ def register_callbacks(app):
         # A period shorter than the 14-day window leaves these as NaN.
         disparity_text = "N/A" if np.isnan(signal_disparity) else f"{signal_disparity:.2f}"
         rsi_text = "N/A" if np.isnan(signal_rsi) else f"{signal_rsi:.1f}"
+        latest_hv20 = hv20.iloc[-1]
+        latest_atrp14 = atrp14.iloc[-1]
+        hv20_text = "N/A" if not np.isfinite(latest_hv20) else f"{latest_hv20:.2f}%"
+        atrp14_text = "N/A" if not np.isfinite(latest_atrp14) else f"{latest_atrp14:.2f}%"
 
         signal_info = [
             metric_card("Disparity (14d)", disparity_text),
             metric_card("RSI (14d)", rsi_text),
+            metric_card("HV20 (annualized)", hv20_text),
+            metric_card("ATRP14", atrp14_text),
             metric_card("Entry Signal", label, color),
             metric_card(
                 "Signals in Period",
@@ -244,4 +339,4 @@ def register_callbacks(app):
             )
         ]
 
-        return fig, fundamental_info, profit_info, signal_info
+        return fig, hover_rows, fundamental_info, profit_info, signal_info

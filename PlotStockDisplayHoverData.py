@@ -1,30 +1,54 @@
-from dash import Input, Output, html
+from dash import Input, Output, State, html
+import math
 
 def register_callbacks(app):
     @app.callback(
         Output("hover-info", "children"),
-        Input("stock-chart", "hoverData")
+        Input("stock-chart", "hoverData"),
+        State("indicator-history", "data"),
     )
 
-    def display_hover_data(hoverData):
+    def display_hover_data(hoverData, indicator_history):
         if not hoverData:
             return "Hover over the chart to see details."
 
-        point = hoverData["points"][0]
-        x = point["x"]
-        open_, high, low, close = point.get("open"), point.get("high"), point.get("low"), point.get("close")
-        volume = point.get("y") if point["data"]["name"]=="Volume" else None
-        custom = point.get("customdata")
-        prev_close = custom[2] if custom is not None else close
+        points = hoverData.get("points", [])
+        point = next(
+            (item for item in points if item.get("data", {}).get("name") == "Price"),
+            points[0] if points else None,
+        )
+        if point is None:
+            return "Hover over the chart to see details."
+
+        x = point.get("x")
+        date_key = str(x)[:10] if x is not None else ""
+        daily = (indicator_history or {}).get(date_key)
+        if daily is None:
+            return "No indicator data for this date."
+
+        open_ = daily.get("open")
+        high = daily.get("high")
+        low = daily.get("low")
+        close = daily.get("close")
+        volume = daily.get("volume")
+        prev_close = daily.get("previous_close")
+        hv20 = daily.get("hv20")
+        atrp14 = daily.get("atrp14")
+        rsi14 = daily.get("rsi14")
 
         # Open: gap
-        open_color = "#28a745" if open_ > prev_close else "#dc3545" if open_ < prev_close else "#007bff"
+        open_color = (
+            "#28a745" if prev_close is not None and open_ > prev_close
+            else "#dc3545" if prev_close is not None and open_ < prev_close
+            else "#007bff"
+        )
         # Close: bullish/bearish
         close_color = "#28a745" if close > open_ else "#dc3545" if close < open_ else "#6c757d"
-        # High/Low: new highs/lows
-        highs, lows = custom[0], custom[1] if custom is not None else (high, low)
-        high_color = "#2ecc71" if high >= max(highs) else "#28a745"
-        low_color = "#e74c3c" if low <= min(lows) else "#dc3545"
+        high_color = "#28a745"
+        low_color = "#dc3545"
+
+        def display_value(value, suffix=""):
+            return f"{value:.2f}{suffix}" if value is not None and math.isfinite(value) else "N/A"
 
         # Badge helper
         def badge(label, value, color):
@@ -44,11 +68,14 @@ def register_callbacks(app):
 
         badges = [
             html.Span(f"📅 {x}", style={"marginRight":"8px", "fontWeight":"bold"}),
-            badge("O", f"{open_:.2f}", open_color),
-            badge("H", f"{high:.2f}", high_color),
-            badge("L", f"{low:.2f}", low_color),
-            badge("C", f"{close:.2f}", close_color),
-            badge("Vol", f"{volume:,}" if volume else "—", "#17a2b8")
+            badge("O", display_value(open_), open_color),
+            badge("H", display_value(high), high_color),
+            badge("L", display_value(low), low_color),
+            badge("C", display_value(close), close_color),
+            badge("HV20", display_value(hv20, "%"), "#6f42c1"),
+            badge("ATRP14", display_value(atrp14, "%"), "#6f42c1"),
+            badge("RSI14", display_value(rsi14), "#6f42c1"),
+            badge("Vol", f"{volume:,.0f}" if volume is not None else "—", "#17a2b8")
         ]
 
         return html.Div(badges, style={"display":"flex","flexWrap":"wrap","gap":"6px"})
